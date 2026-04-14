@@ -1,6 +1,6 @@
 # btick-web
 
-Frontend for [btick](https://btick.justarr.com/) — real-time crypto reference price dashboard.
+Frontend for [btick](https://btick.justarr.com/) — a real-time crypto reference price dashboard.
 
 React 19 + TypeScript. Connects to the btick backend via WebSocket for live prices and REST for historical data.
 
