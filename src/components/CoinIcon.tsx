@@ -37,7 +37,7 @@ const FALLBACK_COLORS: Record<string, string> = {
 };
 
 interface CoinIconProps {
-  /** Ticker symbol — e.g. "btc", "BTC", "BTC/USD", "btc-usd" */
+  /** Asset or canonical symbol, for example "eth", "ETH", "ETH/USD", or "eth-usd". */
   symbol: string;
   size?: number;
   className?: string;

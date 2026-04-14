@@ -71,3 +71,23 @@ code {
 .dot--warn { background: var(--yellow); }
 .dot--error { background: var(--red); }
 .dot--muted { background: var(--text-ghost); }
+
+/* Border-shadow utility */
+.border-shadow {
+  box-shadow:
+    0px 0px 0px 1px rgba(0, 0, 0, 0.06),
+    0px 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0px 2px 4px 0px rgba(0, 0, 0, 0.04);
+}
+
+/* sugar-high syntax token colors */
+:root {
+  --sh-keyword:    #1d5fa6;
+  --sh-string:     #1a6b42;
+  --sh-class:      #9c5500;
+  --sh-identifier: #1a1a1a;
+  --sh-sign:       #888;
+  --sh-comment:    #94a3b8;
+  --sh-property:   #0f6b5e;
+  --sh-space:      inherit;
+}

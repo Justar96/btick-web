@@ -6,8 +6,10 @@
 .summary {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 12px;
+  padding-top: 16px;
   margin-bottom: 4px;
 }
 
@@ -26,6 +28,14 @@
   font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
+}
+
+.summaryValueWarn {
+  color: var(--yellow);
+}
+
+.summaryValueMuted {
+  color: var(--text-ghost);
 }
 
 .summaryDot {
@@ -88,6 +98,10 @@
   color: white;
   flex-shrink: 0;
   letter-spacing: 0.3px;
+  box-shadow:
+    0px 0px 0px 1px rgba(0, 0, 0, 0.06),
+    0px 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0px 2px 4px 0px rgba(0, 0, 0, 0.04);
 }
 
 .name {
@@ -160,10 +174,5 @@
 
   .tableHeader .colLag {
     display: none;
-  }
-
-  .summary {
-    flex-wrap: wrap;
-    gap: 10px;
   }
 }

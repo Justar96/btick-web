@@ -5,8 +5,9 @@ import { CoinIcon } from "./CoinIcon";
 import styles from "./Sidebar.module.css";
 
 const API_SECTIONS = [
+  { id: "overview", label: "Overview" },
   { id: "latest", label: "Latest Price" },
-  { id: "settlement", label: "Settlement" },
+  { id: "settlement", label: "Boundary Price" },
   { id: "snapshots", label: "Snapshots" },
   { id: "websocket", label: "WebSocket" },
   { id: "health", label: "Health" },
@@ -24,7 +25,7 @@ export function Sidebar() {
   const isApiPage = !!matchRoute({ to: "/api" });
   const { data: symbols } = useQuery(symbolsOptions());
 
-  const activeHash = location.hash?.replace("#", "") || "latest";
+  const activeHash = location.hash?.replace("#", "") || "overview";
 
   return (
     <aside className={styles.sidebar}>
@@ -53,8 +54,8 @@ export function Sidebar() {
 
         <Link
           to="/api"
-          hash="latest"
-          className={`${styles.navLink} ${isApiPage ? styles.navLinkActive : ""}`}
+          hash="overview"
+          className={`${styles.navLink} ${styles.apiNavLink} ${isApiPage ? styles.navLinkActive : ""}`}
         >
           <span className={styles.navIcon}>API</span>
           <span>Docs</span>

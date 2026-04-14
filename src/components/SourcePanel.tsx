@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { useSourcePrices, useSourceStatus } from "@/ws/context";
+import { useIntegrityStatus } from "@/ws/useIntegrityStatus";
 import type { PriceState } from "@/ws/types";
 import styles from "./SourcePanel.module.css";
 
@@ -20,30 +21,54 @@ interface Props {
 export function SourcePanel({ price, symbol }: Props) {
   const sources = useSourcePrices(symbol);
   const statuses = useSourceStatus(symbol);
+  const integrity = useIntegrityStatus();
 
   const medianPrice = price ? parseFloat(price.price) : 0;
 
   return (
     <div id="sources" className={styles.wrap}>
       {/* Summary bar */}
-      {price && (
-        <div className={styles.summary}>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Basis</span>
-            <span className={styles.summaryValue}>{formatBasis(price.basis)}</span>
-          </div>
-          <span className={styles.summaryDot} />
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Quality</span>
-            <span className={styles.summaryValue}>{price.qualityScore.toFixed(2)}</span>
-          </div>
-          <span className={styles.summaryDot} />
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Sources</span>
-            <span className={styles.summaryValue}>{price.sourceCount} active</span>
-          </div>
+      <div className={styles.summary}>
+        {price && (
+          <>
+            <div className={styles.summaryItem}>
+              <span className={styles.summaryLabel}>Basis</span>
+              <span className={styles.summaryValue}>{formatBasis(price.basis)}</span>
+            </div>
+            <span className={styles.summaryDot} />
+            <div className={styles.summaryItem}>
+              <span className={styles.summaryLabel}>Quality</span>
+              <span className={styles.summaryValue}>{price.qualityScore.toFixed(2)}</span>
+            </div>
+            <span className={styles.summaryDot} />
+            <div className={styles.summaryItem}>
+              <span className={styles.summaryLabel}>Sources</span>
+              <span className={styles.summaryValue}>{price.sourceCount} active</span>
+            </div>
+            <span className={styles.summaryDot} />
+          </>
+        )}
+        <div className={styles.summaryItem}>
+          <span className={styles.summaryLabel}>Stream</span>
+          <span className={`${styles.summaryValue} ${toneClass(styles, integrity.streamTone)}`}>
+            {integrity.stream}
+          </span>
         </div>
-      )}
+        <span className={styles.summaryDot} />
+        <div className={styles.summaryItem}>
+          <span className={styles.summaryLabel}>Feeds</span>
+          <span className={`${styles.summaryValue} ${toneClass(styles, integrity.feedsTone)}`}>
+            {integrity.feeds}
+          </span>
+        </div>
+        <span className={styles.summaryDot} />
+        <div className={styles.summaryItem}>
+          <span className={styles.summaryLabel}>Settlement</span>
+          <span className={`${styles.summaryValue} ${toneClass(styles, integrity.settlementTone)}`}>
+            {integrity.settlement}
+          </span>
+        </div>
+      </div>
 
       {/* Source rows */}
       <div className={styles.table}>
@@ -131,6 +156,12 @@ function SourceRow({ meta, price, delta, lag, connected, stale }: SourceRowProps
       </span>
     </div>
   );
+}
+
+function toneClass(styles: Record<string, string>, tone: "ok" | "warn" | "muted"): string {
+  if (tone === "warn") return styles.summaryValueWarn ?? "";
+  if (tone === "muted") return styles.summaryValueMuted ?? "";
+  return "";
 }
 
 function formatBasis(basis: string) {

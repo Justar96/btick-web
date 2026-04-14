@@ -6,7 +6,6 @@
   height: 320px;
 }
 
-/* Price range bar below chart */
 .range {
   display: flex;
   align-items: center;
@@ -74,4 +73,5 @@
   .rangeStat {
     padding: 2px 8px;
   }
+
 }

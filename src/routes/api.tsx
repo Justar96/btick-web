@@ -1,21 +1,65 @@
-import { useState, useEffect } from "react";
-import { useLocation } from "@tanstack/react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { highlight } from "sugar-high";
+import {
+  verifySettlementResponseAttestation,
+  type SettlementPrice,
+} from "@/api/attestation";
+import {
+  attestationPublicKeyOptions,
+  settlementPriceOptions,
+} from "@/api/queries";
 import styles from "./api.module.css";
 
-export type ApiSection =
-  | "latest"
-  | "settlement"
-  | "snapshots"
-  | "websocket"
-  | "health"
-  | "endpoints";
+const PLATFORM_CARDS = [
+  {
+    label: "Transports",
+    value: "REST + WebSocket",
+    detail: "HTTPS for point-in-time reads, WebSocket for live fan-out.",
+  },
+  {
+    label: "Boundary cadence",
+    value: "5-minute boundary",
+    detail: "Finalized boundary queries must land exactly on the requested boundary.",
+  },
+  {
+    label: "Primary payload format",
+    value: "JSON + decimal strings",
+    detail: "Timestamps are RFC3339. Monetary values are serialized for precision.",
+  },
+  {
+    label: "Trust surface",
+    value: "Optional Ed25519 proof",
+    detail: "Finalized boundary responses can be verified with the published public key.",
+  },
+];
 
-const DEFAULT_SECTION: ApiSection = "latest";
+const INTEGRATION_FLOWS = [
+  {
+    title: "Live UI and dashboards",
+    detail: "Boot with GET /v1/price/latest, then subscribe to /ws/price for continuous updates.",
+  },
+  {
+    title: "Boundary-driven consumers",
+    detail: "Query GET /v1/price/settlement after the boundary, then verify the attestation when enabled.",
+  },
+  {
+    title: "Historical backfill",
+    detail: "Use snapshots for chart ranges and ticks for precise price-change replay.",
+  },
+];
 
-const LATEST_EXAMPLE = `$ curl /v1/price/latest?symbol=BTC/USD
+const RESPONSE_RULES = [
+  "All endpoints return application/json except the WebSocket stream.",
+  "Error responses use a single error field, for example {\"error\":\"...\"}.",
+  "Quality, source counts, and basis values are part of the trust model, not decoration.",
+  "When access control is enabled, finalized boundary queries, snapshots, ticks, and WebSocket require starter tier or higher.",
+];
+
+const LATEST_EXAMPLE = `$ curl /v1/price/latest?symbol=ETH/USD
 
 {
-  "symbol": "BTC/USD",
+  "symbol": "ETH/USD",
   "ts": "2026-04-12T10:05:00.123456789Z",
   "price": "71455.33",
   "basis": "median_trade",
@@ -30,14 +74,46 @@ const SETTLEMENT_EXAMPLE = `$ curl /v1/price/settlement?ts=2026-04-12T10:05:00Z
 
 {
   "settlement_ts": "2026-04-12T10:05:00Z",
-  "symbol": "BTC/USD",
+  "symbol": "ETH/USD",
   "price": "71455.33",
   "status": "confirmed",
   "basis": "median_trade",
   "quality_score": 0.9556,
   "source_count": 4,
   "sources_used": ["binance", "coinbase", "kraken", "okx"],
-  "finalized_at": "2026-04-12T10:05:01.251Z"
+  "finalized_at": "2026-04-12T10:05:01.251Z",
+  "source_details": "eyJiaW5hbmNlIjp7InByaWNlIjoiNzE0NTUuMzMiLCJ0cyI6IjIwMjYtMDQtMTJUMTA6MDQ6NTkuOTk5WiJ9fQ==",
+  "attestation": {
+    "type": "btick.settlement_attestation.v1",
+    "algorithm": "ed25519",
+    "key_id": "prod-2026-q2",
+    "signed_at": "2026-04-12T10:05:05.102Z",
+    "payload_hash": "sha256:4f0f7a0ccf5e4b6d3d1aef7f98eac6d17ec815f6f49e83a661c4c0e0f8a8ef6f",
+    "signature": "3Zw1W9...",
+    "payload": {
+      "type": "btick.settlement_attestation.v1",
+      "settlement_ts": "2026-04-12T10:05:00Z",
+      "symbol": "ETH/USD",
+      "price": "71455.33",
+      "status": "confirmed",
+      "basis": "median_trade",
+      "quality_score": "0.9556",
+      "source_count": 4,
+      "sources_used": ["binance", "coinbase", "kraken", "okx"],
+      "finalized_at": "2026-04-12T10:05:01.251Z",
+      "source_details_sha256": "sha256:5d962d5c4d37b0d6dd39c4d543af7d6274fc1e90d6f701687ce2f7f4401f4f80"
+    }
+  }
+}`;
+
+const PUBLIC_KEY_EXAMPLE = `$ curl /v1/attestation/public-key
+
+{
+  "type": "btick.settlement_attestation.v1",
+  "algorithm": "ed25519",
+  "key_id": "prod-2026-q2",
+  "public_key": "QvP0bD7WkX0vW6fQ4Qh0uV4b7hA6f2nG6rJm0QO4dDU",
+  "encoding": "base64url"
 }`;
 
 const SNAPSHOTS_EXAMPLE = `$ curl "/v1/price/snapshots?start=2026-04-12T10:00:00Z&end=2026-04-12T10:05:00Z"
@@ -45,7 +121,7 @@ const SNAPSHOTS_EXAMPLE = `$ curl "/v1/price/snapshots?start=2026-04-12T10:00:00
 [
   {
     "ts_second": "2026-04-12T10:00:00Z",
-    "symbol": "BTC/USD",
+    "symbol": "ETH/USD",
     "price": "71440.10",
     "basis": "median_trade",
     "quality_score": 0.95,
@@ -59,7 +135,7 @@ const TICKS_EXAMPLE = `$ curl /v1/price/ticks?limit=5
 [
   {
     "ts": "2026-04-12T10:05:00.123Z",
-    "symbol": "BTC/USD",
+    "symbol": "ETH/USD",
     "price": "71455.33",
     "basis": "median_trade",
     "source_count": 4
@@ -74,7 +150,6 @@ let lastSeq = 0
 ws.onmessage = (e) => {
   const msg = JSON.parse(e.data)
 
-  // Detect missed messages via sequence gaps
   if (msg.seq && lastSeq > 0 && msg.seq > lastSeq + 1) {
     console.warn(\`Missed \${msg.seq - lastSeq - 1} messages\`)
   }
@@ -85,34 +160,24 @@ ws.onmessage = (e) => {
       console.log("Connected:", msg.message)
       break
     case "latest_price":
-      if (msg.message === "initial_state") {
-        console.log("Current price:", msg.price)
-      } else {
-        console.log("Price update:", msg.price)
-      }
+      console.log("Price update:", msg.price)
       break
     case "snapshot_1s":
       console.log("Snapshot:", msg.price, "@", msg.ts)
       break
   }
-}
+}`;
 
-// Reconnect with backoff on close
-ws.onclose = () => setTimeout(() => connect(), delay)`;
-
-const WS_SUBSCRIBE_EXAMPLE = `// Only receive snapshots (unsubscribe from the rest)
-ws.send(JSON.stringify({
+const WS_SUBSCRIBE_EXAMPLE = `ws.send(JSON.stringify({
   action: "unsubscribe",
   types: ["latest_price", "heartbeat"]
 }))
 
-// Subscribe to source-level data (opt-in)
 ws.send(JSON.stringify({
   action: "subscribe",
   types: ["source_price", "source_status"]
 }))
 
-// Filter to specific symbols
 ws.send(JSON.stringify({
   action: "subscribe",
   types: ["latest_price"],
@@ -143,17 +208,89 @@ const FEEDS_EXAMPLE = `$ curl /v1/health/feeds
 ]`;
 
 const ALL_ENDPOINTS = [
-  { method: "GET", path: "/v1/price/latest", desc: "Current canonical price" },
-  { method: "GET", path: "/v1/price/settlement", desc: "Settlement price at 5-min boundary" },
-  { method: "GET", path: "/v1/price/snapshots", desc: "Historical 1s snapshots" },
-  { method: "GET", path: "/v1/price/ticks", desc: "Recent price changes" },
-  { method: "GET", path: "/v1/price/raw", desc: "Raw exchange data (audit)" },
-  { method: "GET", path: "/v1/health", desc: "System health" },
-  { method: "GET", path: "/v1/health/feeds", desc: "Per-source feed health" },
-  { method: "GET", path: "/v1/symbols", desc: "Configured symbols" },
-  { method: "GET", path: "/metrics", desc: "Prometheus metrics" },
-  { method: "WS", path: "/ws/price", desc: "Real-time price stream" },
+  {
+    method: "GET",
+    path: "/v1/price/latest",
+    access: "Public",
+    desc: "Current canonical price",
+    notes: "Fastest read path, served from memory.",
+  },
+  {
+    method: "GET",
+    path: "/v1/price/settlement",
+    access: "Starter",
+    desc: "Finalized boundary price at a 5-minute interval",
+    notes: "Use for downstream reconciliation, attestable cutoffs, and audits.",
+  },
+  {
+    method: "GET",
+    path: "/v1/attestation/public-key",
+    access: "Public",
+    desc: "Active attestation verification key",
+    notes: "Available only when attestations are enabled.",
+  },
+  {
+    method: "GET",
+    path: "/v1/price/snapshots",
+    access: "Starter",
+    desc: "Historical 1-second snapshots",
+    notes: "Best fit for charts, candles, and backfill.",
+  },
+  {
+    method: "GET",
+    path: "/v1/price/ticks",
+    access: "Starter",
+    desc: "Recent canonical price changes",
+    notes: "Useful for precise replay of movement rather than fixed intervals.",
+  },
+  {
+    method: "GET",
+    path: "/v1/price/raw",
+    access: "Pro tier",
+    desc: "Underlying exchange data",
+    notes: "Audit/debug surface for venue-level investigation.",
+  },
+  {
+    method: "WS",
+    path: "/ws/price",
+    access: "Starter",
+    desc: "Live stream with sequencing",
+    notes: "Subscribe once and keep UI state hot.",
+  },
+  {
+    method: "GET",
+    path: "/v1/health",
+    access: "Public",
+    desc: "Instance health",
+    notes: "Top-level readiness and latest-price status.",
+  },
+  {
+    method: "GET",
+    path: "/v1/health/feeds",
+    access: "Public",
+    desc: "Per-source operational status",
+    notes: "Track venue lag, connection state, and staleness.",
+  },
+  {
+    method: "GET",
+    path: "/v1/symbols",
+    access: "Public",
+    desc: "Configured symbols",
+    notes: "Discover canonical products available on this instance.",
+  },
+  {
+    method: "GET",
+    path: "/metrics",
+    access: "Public",
+    desc: "Prometheus metrics",
+    notes: "Scrape-friendly runtime metrics for ops.",
+  },
 ];
+
+type ProofState = {
+  kind: "idle" | "loading" | "verified" | "invalid" | "missing";
+  message: string;
+};
 
 function MethodBadge({ method }: { method: string }) {
   return (
@@ -165,193 +302,625 @@ function MethodBadge({ method }: { method: string }) {
   );
 }
 
-function parseHash(hash: string): ApiSection {
-  const val = hash.replace("#", "") as ApiSection;
-  const valid: ApiSection[] = [
-    "latest",
-    "settlement",
-    "snapshots",
-    "websocket",
-    "health",
-    "endpoints",
-  ];
-  return valid.includes(val) ? val : DEFAULT_SECTION;
+function Code({ children }: { children: string }) {
+  return (
+    <pre className={styles.codeBlock}>
+      <code dangerouslySetInnerHTML={{ __html: highlight(children) }} />
+    </pre>
+  );
 }
 
-function LatestSection() {
+function SectionFrame({
+  id,
+  eyebrow,
+  title,
+  desc,
+  children,
+}: {
+  id: string;
+  eyebrow: string;
+  title: string;
+  desc: string;
+  children: ReactNode;
+}) {
   return (
-    <section className={styles.section}>
-      <div className={styles.endpoint}>
-        <MethodBadge method="GET" />
-        <code className={styles.path}>/v1/price/latest</code>
+    <section id={id} className={styles.section}>
+      <div className={styles.sectionLead}>
+        <div className={styles.sectionEyebrow}>{eyebrow}</div>
+        <h2 className={styles.sectionTitle}>{title}</h2>
+        <p className={styles.sectionDesc}>{desc}</p>
       </div>
-      <p className={styles.sectionDesc}>
-        Current canonical price from memory. Lowest latency endpoint — no
-        database required.
-      </p>
-      <div className={styles.params}>
-        <div className={styles.paramsLabel}>Parameters</div>
-        <div className={styles.param}>
-          <code className={styles.paramName}>symbol</code>
-          <span className={styles.paramOptional}>optional</span>
-          <span className={styles.paramDesc}>
-            Canonical symbol (e.g. BTC/USD). Defaults to first configured.
-          </span>
-        </div>
-      </div>
-      <pre className={styles.codeBlock}>{LATEST_EXAMPLE}</pre>
-      <div className={styles.errors}>
-        <span className={styles.errorCode}>503</span> no data available yet
-      </div>
+      {children}
     </section>
   );
 }
 
-function SettlementSection() {
+function EndpointHeader({
+  method,
+  path,
+  audience,
+}: {
+  method: string;
+  path: string;
+  audience: string;
+}) {
   return (
-    <section className={styles.section}>
-      <div className={styles.endpoint}>
-        <MethodBadge method="GET" />
-        <code className={styles.path}>/v1/price/settlement</code>
+    <div className={styles.endpointCard}>
+      <div className={styles.endpointTop}>
+        <div className={styles.endpointRow}>
+          <MethodBadge method={method} />
+          <code className={styles.path}>{path}</code>
+        </div>
+        <span className={styles.audienceBadge}>{audience}</span>
       </div>
-      <p className={styles.sectionDesc}>
-        Official settlement price at a 5-minute boundary.{" "}
-        <strong>Primary endpoint for prediction market resolution.</strong>{" "}
-        Wait at least 5 seconds after the boundary for finalization.
-      </p>
+    </div>
+  );
+}
+
+function DetailGrid({
+  items,
+}: {
+  items: Array<{ label: string; value: string; detail: string }>;
+}) {
+  return (
+    <div className={styles.detailGrid}>
+      {items.map((item) => (
+        <div key={item.label} className={styles.detailCard}>
+          <div className={styles.detailLabel}>{item.label}</div>
+          <div className={styles.detailValue}>{item.value}</div>
+          <div className={styles.detailText}>{item.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FieldTable({
+  rows,
+}: {
+  rows: Array<{ field: string; type: string; notes: string }>;
+}) {
+  return (
+    <table className={styles.fieldTable}>
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.field}>
+            <td>{row.field}</td>
+            <td>{row.type}</td>
+            <td>{row.notes}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function OverviewSection() {
+  return (
+    <SectionFrame
+      id="overview"
+      eyebrow="Overview"
+      title="Integration model"
+      desc="btick exposes one fast live surface, one finalized boundary surface, and one replay surface. Use them intentionally instead of treating every route as interchangeable price data."
+    >
+      <DetailGrid items={PLATFORM_CARDS} />
+
+      <div className={styles.panelGrid}>
+        <div className={styles.panel}>
+          <div className={styles.panelTitle}>Recommended flows</div>
+          <div className={styles.flowList}>
+            {INTEGRATION_FLOWS.map((flow, index) => (
+              <div key={flow.title} className={styles.flowItem}>
+                <span className={styles.flowIndex}>{index + 1}</span>
+                <div>
+                  <div className={styles.flowTitle}>{flow.title}</div>
+                  <div className={styles.flowText}>{flow.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.panel}>
+          <div className={styles.panelTitle}>Response conventions</div>
+          <div className={styles.ruleList}>
+            {RESPONSE_RULES.map((rule) => (
+              <div key={rule} className={styles.ruleItem}>
+                {rule}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </SectionFrame>
+  );
+}
+
+function LatestSection() {
+  return (
+    <SectionFrame
+      id="latest"
+      eyebrow="REST"
+      title="Latest price"
+      desc="Use this route for app chrome, dashboards, and live price displays where the freshest in-memory canonical value matters more than finalized boundary semantics."
+    >
+      <EndpointHeader method="GET" path="/v1/price/latest" audience="Public" />
+
+      <DetailGrid
+        items={[
+          {
+            label: "Backed by",
+            value: "Memory",
+            detail: "No historical query required. Lowest latency surface in the system.",
+          },
+          {
+            label: "Timing model",
+            value: "Arrival-time latest",
+            detail: "Optimized for freshness rather than sealed event-time boundary finalization.",
+          },
+          {
+            label: "Do not use for",
+            value: "Finalized boundary decisions",
+            detail: "Boundary and audit flows should query the dedicated settlement route.",
+          },
+        ]}
+      />
+
       <div className={styles.params}>
-        <div className={styles.paramsLabel}>Parameters</div>
+        <div className={styles.paramsLabel}>Query parameters</div>
+        <div className={styles.param}>
+          <code className={styles.paramName}>symbol</code>
+          <span className={styles.paramOptional}>optional</span>
+          <span className={styles.paramDesc}>
+            Canonical symbol such as ETH/USD. Defaults to the first configured symbol.
+          </span>
+        </div>
+      </div>
+
+      <Code>{LATEST_EXAMPLE}</Code>
+
+      <div className={styles.sectionSubtitle}>Key fields</div>
+      <FieldTable
+        rows={[
+          { field: "ts", type: "RFC3339 timestamp", notes: "Server-side observation time for the latest state." },
+          { field: "basis", type: "enum", notes: "Why the canonical price resolved the way it did." },
+          { field: "quality_score", type: "float", notes: "Quality signal from 0 to 1. Lower values indicate weaker confidence." },
+          { field: "source_count", type: "integer", notes: "How many sources contributed to the live canonical price." },
+        ]}
+      />
+
+      <div className={styles.errors}>
+        <span className={styles.errorCode}>503</span> no data available yet
+      </div>
+    </SectionFrame>
+  );
+}
+
+function SettlementSection() {
+  const [inputTS, setInputTS] = useState(defaultSettlementTimestamp);
+  const [requestedTS, setRequestedTS] = useState(defaultSettlementTimestamp);
+  const [tamperDemo, setTamperDemo] = useState(false);
+  const [proofState, setProofState] = useState<ProofState>({
+    kind: "loading",
+    message: "Fetching finalized boundary proof…",
+  });
+
+  const settlementQuery = useQuery(settlementPriceOptions(requestedTS));
+  const displayedSettlement = settlementQuery.data
+    ? maybeTamperSettlement(settlementQuery.data, tamperDemo)
+    : undefined;
+  const publicKeyQuery = useQuery({
+    ...attestationPublicKeyOptions(),
+    enabled: Boolean(settlementQuery.data?.attestation),
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runVerification() {
+      if (settlementQuery.isLoading) {
+        setProofState({ kind: "loading", message: "Fetching finalized boundary proof…" });
+        return;
+      }
+      if (settlementQuery.error) {
+        setProofState({ kind: "invalid", message: getErrorMessage(settlementQuery.error) });
+        return;
+      }
+      if (!displayedSettlement) {
+        setProofState({ kind: "idle", message: "Choose a finalized boundary timestamp to verify." });
+        return;
+      }
+      if (!displayedSettlement.attestation) {
+        setProofState({ kind: "missing", message: "This finalized boundary response does not include an attestation." });
+        return;
+      }
+      if (publicKeyQuery.isLoading) {
+        setProofState({ kind: "loading", message: "Loading active verification key…" });
+        return;
+      }
+      if (publicKeyQuery.error) {
+        setProofState({ kind: "invalid", message: getErrorMessage(publicKeyQuery.error) });
+        return;
+      }
+      if (!publicKeyQuery.data) {
+        setProofState({ kind: "invalid", message: "Verification key was not returned by the server." });
+        return;
+      }
+
+      setProofState({
+        kind: "loading",
+        message: tamperDemo
+          ? "Re-running verifier against a tampered response…"
+          : "Checking signature, hashes, and outer response fields…",
+      });
+
+      try {
+        await verifySettlementResponseAttestation(displayedSettlement, publicKeyQuery.data);
+        if (!cancelled) {
+          setProofState({
+            kind: "verified",
+            message: `Verified with key ${publicKeyQuery.data.key_id}. Signature, payload hash, and source_details hash all match.`,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProofState({ kind: "invalid", message: getErrorMessage(error) });
+        }
+      }
+    }
+
+    void runVerification();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    displayedSettlement,
+    publicKeyQuery.data,
+    publicKeyQuery.error,
+    publicKeyQuery.isLoading,
+    settlementQuery.data,
+    settlementQuery.error,
+    settlementQuery.isLoading,
+    tamperDemo,
+  ]);
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRequestedTS(inputTS.trim());
+  }
+
+  const proofBadgeClass = [
+    styles.proofBadge,
+    proofState.kind === "verified"
+      ? styles.proofBadgeVerified
+      : proofState.kind === "invalid"
+        ? styles.proofBadgeInvalid
+        : proofState.kind === "missing"
+          ? styles.proofBadgeMissing
+          : styles.proofBadgePending,
+  ].join(" ");
+
+  return (
+    <SectionFrame
+      id="settlement"
+      eyebrow="Resolution"
+      title="Finalized boundary endpoint"
+      desc="This is the finalized boundary route behind the legacy settlement path. It is intentionally separate from the low-latency latest-price fast path so downstream systems can consume sealed, attestable cutoffs."
+    >
+      <EndpointHeader method="GET" path="/v1/price/settlement" audience="Starter" />
+
+      <DetailGrid
+        items={[
+          {
+            label: "Boundary",
+            value: "Exact 5-minute RFC3339",
+            detail: "Only timestamps aligned to the 5-minute close are valid.",
+          },
+          {
+            label: "Finalization",
+            value: "Wait a few seconds",
+            detail: "Request after the boundary plus finalization delay to avoid 425 responses.",
+          },
+          {
+            label: "Trust surface",
+            value: "Status + proof",
+            detail: "Use status, source_count, and optional attestation together before accepting a finalized boundary result.",
+          },
+        ]}
+      />
+
+      <div className={styles.params}>
+        <div className={styles.paramsLabel}>Query parameters</div>
         <div className={styles.param}>
           <code className={styles.paramName}>ts</code>
           <span className={styles.paramRequired}>required</span>
           <span className={styles.paramDesc}>
-            RFC3339 timestamp on a 5-minute boundary (e.g.
-            2026-04-12T10:05:00Z)
+            RFC3339 timestamp on a 5-minute boundary, for example 2026-04-12T10:05:00Z.
           </span>
         </div>
       </div>
-      <pre className={styles.codeBlock}>{SETTLEMENT_EXAMPLE}</pre>
+
+      <Code>{SETTLEMENT_EXAMPLE}</Code>
+
+      <div className={styles.sectionSubtitle}>Key fields</div>
+      <FieldTable
+        rows={[
+          { field: "status", type: "confirmed | degraded | stale", notes: "Operational confidence for downstream boundary-handling logic." },
+          { field: "finalized_at", type: "RFC3339 timestamp", notes: "When btick sealed and finalized the response payload." },
+          { field: "source_details", type: "base64 string", notes: "Audit payload containing the per-source details behind the finalized boundary response." },
+          { field: "attestation", type: "object | omitted", notes: "Present only when boundary-response signing is enabled on the instance." },
+        ]}
+      />
+
+      <div className={styles.subEndpoint}>
+        <MethodBadge method="GET" />
+        <code className={styles.path}>/v1/attestation/public-key</code>
+        <span className={styles.inlineBadge}>Public key discovery</span>
+      </div>
+      <p className={styles.sectionDesc}>
+        Fetch the active Ed25519 verification key before validating signed finalized boundary responses in Go, TypeScript, or any external verifier.
+      </p>
+      <Code>{PUBLIC_KEY_EXAMPLE}</Code>
+
+      <div className={styles.proofPanel}>
+        <div className={styles.proofHeader}>
+          <div>
+            <div className={styles.sectionSubtitle}>Live proof check</div>
+            <p className={styles.sectionDesc}>
+              This page runs the browser verifier from <code>@/api/attestation</code> against a real finalized boundary response and the published key, then shows how tampering is detected.
+            </p>
+          </div>
+          <span className={proofBadgeClass}>{proofLabel(proofState.kind)}</span>
+        </div>
+
+        <form className={styles.proofControls} onSubmit={handleSubmit}>
+          <label className={styles.proofField}>
+            <span className={styles.paramsLabel}>Boundary timestamp</span>
+            <input
+              className={styles.proofInput}
+              type="text"
+              value={inputTS}
+              onChange={(event) => setInputTS(event.target.value)}
+              spellCheck={false}
+              placeholder="2026-04-12T10:05:00Z"
+            />
+          </label>
+          <button className={styles.proofButton} type="submit">
+            Verify live proof
+          </button>
+        </form>
+
+        <label className={styles.proofToggle}>
+          <input
+            type="checkbox"
+            checked={tamperDemo}
+            onChange={(event) => setTamperDemo(event.target.checked)}
+          />
+          <span>Simulate transport tampering by mutating the outer response price after fetch.</span>
+        </label>
+
+        <div className={styles.proofMessage}>{proofState.message}</div>
+
+        <div className={styles.proofMetaGrid}>
+          <div className={styles.proofMetaCard}>
+            <div className={styles.proofMetaLabel}>Requested ts</div>
+            <div className={styles.proofMetaValue}>{requestedTS}</div>
+          </div>
+          <div className={styles.proofMetaCard}>
+            <div className={styles.proofMetaLabel}>Key id</div>
+            <div className={styles.proofMetaValue}>
+              {displayedSettlement?.attestation?.key_id ?? publicKeyQuery.data?.key_id ?? "-"}
+            </div>
+          </div>
+          <div className={styles.proofMetaCard}>
+            <div className={styles.proofMetaLabel}>Signature algorithm</div>
+            <div className={styles.proofMetaValue}>
+              {displayedSettlement?.attestation?.algorithm ?? publicKeyQuery.data?.algorithm ?? "-"}
+            </div>
+          </div>
+          <div className={styles.proofMetaCard}>
+            <div className={styles.proofMetaLabel}>Signed at</div>
+            <div className={styles.proofMetaValue}>
+              {displayedSettlement?.attestation?.signed_at ?? "-"}
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.proofJsonGrid}>
+          <div>
+            <div className={styles.proofJsonLabel}>Finalized boundary response under verification</div>
+            <Code>
+              {displayedSettlement
+                ? JSON.stringify(displayedSettlement, null, 2)
+                : "Load a finalized boundary response to inspect the signed payload."}
+            </Code>
+          </div>
+          <div>
+            <div className={styles.proofJsonLabel}>Active public key</div>
+            <Code>
+              {publicKeyQuery.data
+                ? JSON.stringify(publicKeyQuery.data, null, 2)
+                : "The key endpoint is queried only when the finalized boundary response includes an attestation."}
+            </Code>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.sectionSubtitle}>Boundary status model</div>
       <table className={styles.statusTable}>
         <thead>
           <tr>
             <th>Status</th>
             <th>Meaning</th>
-            <th>Action</th>
+            <th>Recommended action</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>confirmed</td>
-            <td>Multi-source, high quality</td>
-            <td>Safe to auto-settle</td>
+            <td>Multi-source, high-quality finalized boundary price</td>
+            <td>Safe for normal automated downstream acceptance</td>
           </tr>
           <tr>
             <td>degraded</td>
-            <td>Fewer than minimum sources</td>
-            <td>Manual review recommended</td>
+            <td>Reduced source coverage or weaker quality</td>
+            <td>Review before automatically consuming downstream</td>
           </tr>
           <tr>
             <td>stale</td>
-            <td>No fresh data at settlement time</td>
-            <td>Trigger dispute flow</td>
+            <td>No sufficiently fresh venue state at the requested boundary</td>
+            <td>Escalate to manual handling or a stricter fallback policy</td>
           </tr>
         </tbody>
       </table>
+
       <div className={styles.errors}>
         <span className={styles.errorCode}>400</span> invalid ts format{" · "}
-        <span className={styles.errorCode}>400</span> not on 5-min boundary{" · "}
-        <span className={styles.errorCode}>425</span> not yet finalized{" · "}
+        <span className={styles.errorCode}>400</span> not on 5-minute boundary{" · "}
+        <span className={styles.errorCode}>425</span> settlement not yet finalized{" · "}
         <span className={styles.errorCode}>404</span> no data for timestamp
       </div>
-    </section>
+    </SectionFrame>
   );
 }
 
 function SnapshotsSection() {
   return (
-    <section className={styles.section}>
-      <div className={styles.endpoint}>
-        <MethodBadge method="GET" />
-        <code className={styles.path}>/v1/price/snapshots</code>
-      </div>
-      <p className={styles.sectionDesc}>
-        Historical 1-second price snapshots in a time range.
-      </p>
+    <SectionFrame
+      id="snapshots"
+      eyebrow="History"
+      title="Snapshots and ticks"
+      desc="Use these database-backed routes when you need a replayable view of price evolution rather than only the current latest state."
+    >
+      <EndpointHeader method="GET" path="/v1/price/snapshots" audience="Starter" />
+
+      <DetailGrid
+        items={[
+          {
+            label: "Granularity",
+            value: "1-second snapshots",
+            detail: "Stable fixed-interval history for charts and historical analysis.",
+          },
+          {
+            label: "Backed by",
+            value: "Database",
+            detail: "This is a historical query path and depends on storage availability.",
+          },
+          {
+            label: "Best use",
+            value: "Chart backfill",
+            detail: "Seed chart state first, then append live snapshots from WebSocket.",
+          },
+        ]}
+      />
+
       <div className={styles.params}>
-        <div className={styles.paramsLabel}>Parameters</div>
+        <div className={styles.paramsLabel}>Query parameters</div>
         <div className={styles.param}>
           <code className={styles.paramName}>start</code>
           <span className={styles.paramRequired}>required</span>
-          <span className={styles.paramDesc}>Start time (RFC3339)</span>
+          <span className={styles.paramDesc}>Range start in RFC3339 format.</span>
         </div>
         <div className={styles.param}>
           <code className={styles.paramName}>end</code>
           <span className={styles.paramOptional}>optional</span>
-          <span className={styles.paramDesc}>
-            End time (RFC3339), defaults to now
-          </span>
+          <span className={styles.paramDesc}>Range end in RFC3339 format. Defaults to now.</span>
         </div>
       </div>
-      <pre className={styles.codeBlock}>{SNAPSHOTS_EXAMPLE}</pre>
+
+      <Code>{SNAPSHOTS_EXAMPLE}</Code>
+
+      <div className={styles.sectionSubtitle}>Snapshot fields</div>
+      <FieldTable
+        rows={[
+          { field: "ts_second", type: "RFC3339 timestamp", notes: "The sealed one-second bucket represented by the row." },
+          { field: "price", type: "decimal string", notes: "Canonical price for that second." },
+          { field: "quality_score", type: "float", notes: "Confidence proxy for that particular second." },
+          { field: "source_count", type: "integer", notes: "How many sources participated in the final snapshot." },
+        ]}
+      />
 
       <div className={styles.subEndpoint}>
         <MethodBadge method="GET" />
         <code className={styles.path}>/v1/price/ticks</code>
+        <span className={styles.inlineBadge}>Change stream replay</span>
       </div>
       <p className={styles.sectionDesc}>
-        Recent canonical price change events. Each tick represents a price
-        movement.
+        Ticks are sparse and only emitted when the canonical price changes. Use them when change precision matters more than evenly spaced intervals.
       </p>
+
       <div className={styles.params}>
-        <div className={styles.paramsLabel}>Parameters</div>
+        <div className={styles.paramsLabel}>Query parameters</div>
         <div className={styles.param}>
           <code className={styles.paramName}>limit</code>
           <span className={styles.paramOptional}>optional</span>
-          <span className={styles.paramDesc}>
-            Number of ticks (default 100, max 1000)
-          </span>
+          <span className={styles.paramDesc}>Number of rows to return. Default 100, maximum 1000.</span>
         </div>
       </div>
-      <pre className={styles.codeBlock}>{TICKS_EXAMPLE}</pre>
+
+      <Code>{TICKS_EXAMPLE}</Code>
+
       <div className={styles.errors}>
         <span className={styles.errorCode}>503</span> database not available
       </div>
-    </section>
+    </SectionFrame>
   );
 }
 
 function WebSocketSection() {
   return (
-    <section className={styles.section}>
-      <div className={styles.endpoint}>
-        <MethodBadge method="WS" />
-        <code className={styles.path}>/ws/price</code>
-      </div>
-      <p className={styles.sectionDesc}>
-        Real-time price stream over WebSocket. On connect, the server sends a{" "}
-        <code>welcome</code> message followed by <code>initial_state</code>{" "}
-        (the current price). Live broadcast data then flows continuously. All
-        broadcast messages carry a monotonic <code>seq</code> number for gap
-        detection.
-      </p>
+    <SectionFrame
+      id="websocket"
+      eyebrow="Streaming"
+      title="Real-time WebSocket"
+      desc="The WebSocket stream is the primary live-delivery transport for frontends. It sends a welcome frame, current state, then incremental broadcast messages with sequence numbers for gap detection."
+    >
+      <EndpointHeader method="WS" path="/ws/price" audience="Starter" />
+
+      <DetailGrid
+        items={[
+          {
+            label: "Delivery model",
+            value: "Sequenced broadcast",
+            detail: "Use seq gaps to detect dropped messages or reconnect boundaries.",
+          },
+          {
+            label: "Default feed",
+            value: "latest_price + snapshot_1s",
+            detail: "Source-level streams are opt-in and symbol filters are supported.",
+          },
+          {
+            label: "Ideal use",
+            value: "Keep UI hot",
+            detail: "Use this to avoid polling while preserving immediate user feedback.",
+          },
+        ]}
+      />
 
       <div className={styles.sectionSubtitle}>Connect</div>
-      <pre className={styles.codeBlock}>{WS_EXAMPLE}</pre>
+      <Code>{WS_EXAMPLE}</Code>
 
-      <div className={styles.sectionSubtitle}>Message Types</div>
+      <div className={styles.sectionSubtitle}>Message types</div>
       <table className={styles.msgTable}>
         <thead>
           <tr>
             <th>Type</th>
             <th>Direction</th>
-            <th>Key Fields</th>
+            <th>Key fields</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>welcome</td>
             <td>server → client</td>
-            <td>message ("btick/v1")</td>
+            <td>message, protocol identifier</td>
           </tr>
           <tr>
             <td>latest_price</td>
@@ -371,12 +940,12 @@ function WebSocketSection() {
           <tr>
             <td>source_price</td>
             <td>server → client</td>
-            <td>source, price (opt-in)</td>
+            <td>source, price</td>
           </tr>
           <tr>
             <td>source_status</td>
             <td>server → client</td>
-            <td>source, state (opt-in)</td>
+            <td>source, state</td>
           </tr>
           <tr>
             <td>subscribe</td>
@@ -391,30 +960,48 @@ function WebSocketSection() {
         </tbody>
       </table>
 
-      <div className={styles.sectionSubtitle}>Subscription Filtering</div>
+      <div className={styles.sectionSubtitle}>Filtering and symbol targeting</div>
       <p className={styles.sectionDesc}>
-        By default, clients receive <code>latest_price</code>,{" "}
-        <code>snapshot_1s</code>, and <code>heartbeat</code>. Source-level
-        types (<code>source_price</code>, <code>source_status</code>) are
-        opt-in. Unknown types and symbols are silently ignored.
+        By default, clients receive <code>latest_price</code>, <code>snapshot_1s</code>, and <code>heartbeat</code>. Source-level types are opt-in. Unknown types and symbols are ignored for forward compatibility.
       </p>
-      <pre className={styles.codeBlock}>{WS_SUBSCRIBE_EXAMPLE}</pre>
-    </section>
+      <Code>{WS_SUBSCRIBE_EXAMPLE}</Code>
+    </SectionFrame>
   );
 }
 
 function HealthSection() {
   return (
-    <section className={styles.section}>
-      <div className={styles.endpoint}>
-        <MethodBadge method="GET" />
-        <code className={styles.path}>/v1/health</code>
-      </div>
-      <p className={styles.sectionDesc}>
-        System health check. Returns overall status, database readiness, and
-        latest price info.
-      </p>
-      <pre className={styles.codeBlock}>{HEALTH_EXAMPLE}</pre>
+    <SectionFrame
+      id="health"
+      eyebrow="Operations"
+      title="Health and feed inspection"
+      desc="These routes support platform monitoring, not trading logic. Use them to understand whether the instance and underlying venue feeds are healthy."
+    >
+      <EndpointHeader method="GET" path="/v1/health" audience="Public" />
+
+      <DetailGrid
+        items={[
+          {
+            label: "Top-level status",
+            value: "ok / degraded / stale / no_data",
+            detail: "Summarizes the operational state of the current canonical feed.",
+          },
+          {
+            label: "Dependency signal",
+            value: "Database readiness",
+            detail: "Useful for readiness checks during deploys and incident response.",
+          },
+          {
+            label: "Operational use",
+            value: "Monitoring only",
+            detail: "Do not derive finalized boundary decisions from health routes.",
+          },
+        ]}
+      />
+
+      <Code>{HEALTH_EXAMPLE}</Code>
+
+      <div className={styles.sectionSubtitle}>Status meanings</div>
       <table className={styles.statusTable}>
         <thead>
           <tr>
@@ -425,19 +1012,19 @@ function HealthSection() {
         <tbody>
           <tr>
             <td>ok</td>
-            <td>All systems healthy, fresh data</td>
+            <td>All systems healthy and price data fresh.</td>
           </tr>
           <tr>
             <td>degraded</td>
-            <td>Fewer than minimum sources available</td>
+            <td>Fewer than minimum healthy sources are contributing.</td>
           </tr>
           <tr>
             <td>stale</td>
-            <td>No fresh data, carry-forward active</td>
+            <td>No sufficiently fresh data; carry-forward may be active.</td>
           </tr>
           <tr>
             <td>no_data</td>
-            <td>No price data available yet</td>
+            <td>The instance has not produced a canonical price yet.</td>
           </tr>
         </tbody>
       </table>
@@ -445,78 +1032,137 @@ function HealthSection() {
       <div className={styles.subEndpoint}>
         <MethodBadge method="GET" />
         <code className={styles.path}>/v1/health/feeds</code>
+        <span className={styles.inlineBadge}>Venue diagnostics</span>
       </div>
       <p className={styles.sectionDesc}>
-        Per-source feed health. Shows connection state, last trade time, median
-        lag, and staleness for each exchange.
+        Feed health returns per-source diagnostics, including connection state, median lag, freshness, and last trade activity.
       </p>
-      <pre className={styles.codeBlock}>{FEEDS_EXAMPLE}</pre>
-      <div className={styles.errors}>
-        <span className={styles.errorCode}>503</span> database not available
-      </div>
-    </section>
+      <Code>{FEEDS_EXAMPLE}</Code>
+
+      <div className={styles.sectionSubtitle}>Feed fields</div>
+      <FieldTable
+        rows={[
+          { field: "conn_state", type: "enum", notes: "Connection lifecycle state for the source adapter." },
+          { field: "last_trade_ts", type: "RFC3339 timestamp", notes: "Most recent observed trade from that venue." },
+          { field: "median_lag_ms", type: "integer", notes: "Median ingest lag for the source over the sampled period." },
+          { field: "stale", type: "boolean", notes: "Whether the source is currently outside the freshness window." },
+        ]}
+      />
+    </SectionFrame>
   );
 }
 
 function EndpointsSection() {
   return (
-    <section className={styles.section}>
-      <div className={styles.sectionSubtitle}>All Endpoints</div>
-      <div>
-        {ALL_ENDPOINTS.map((ep) => (
-          <div key={ep.path} className={styles.summaryRow}>
-            <span
-              className={`${styles.summaryMethod} ${ep.method === "WS" ? styles.methodWs : styles.methodGet}`}
-            >
-              {ep.method}
-            </span>
-            <span className={styles.summaryPath}>{ep.path}</span>
-            <span className={styles.summaryDesc}>{ep.desc}</span>
-          </div>
-        ))}
-      </div>
-    </section>
+    <SectionFrame
+      id="endpoints"
+      eyebrow="Reference"
+      title="Endpoint index"
+      desc="This is the short-form inventory for teams that already know the btick model and just need route, access, and purpose at a glance."
+    >
+      <table className={styles.summaryTable}>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Access</th>
+            <th>Use</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ALL_ENDPOINTS.map((endpoint) => (
+            <tr key={endpoint.path}>
+              <td>
+                <MethodBadge method={endpoint.method} />
+              </td>
+              <td>{endpoint.path}</td>
+              <td>{endpoint.access}</td>
+              <td>{endpoint.desc}</td>
+              <td>{endpoint.notes}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </SectionFrame>
   );
 }
 
-const SECTIONS: Record<ApiSection, React.FC> = {
-  latest: LatestSection,
-  settlement: SettlementSection,
-  snapshots: SnapshotsSection,
-  websocket: WebSocketSection,
-  health: HealthSection,
-  endpoints: EndpointsSection,
-};
+function defaultSettlementTimestamp() {
+  const now = new Date(Date.now() - 10 * 60 * 1000);
+  const truncated = new Date(now);
+  truncated.setUTCSeconds(0, 0);
+  truncated.setUTCMinutes(Math.floor(truncated.getUTCMinutes() / 5) * 5);
+  return truncated.toISOString().replace(/\.000Z$/, "Z");
+}
+
+function maybeTamperSettlement(settlement: SettlementPrice, tamperDemo: boolean): SettlementPrice {
+  if (!tamperDemo) {
+    return settlement;
+  }
+  return {
+    ...settlement,
+    price: nudgePrice(settlement.price),
+  };
+}
+
+function nudgePrice(price: string) {
+  const numeric = Number.parseFloat(price);
+  if (!Number.isFinite(numeric)) {
+    return `${price}-tampered`;
+  }
+  const decimalPlaces = price.includes(".") ? price.split(".")[1].length : 0;
+  const increment = decimalPlaces > 0 ? 10 ** -decimalPlaces : 1;
+  return (numeric + increment).toFixed(decimalPlaces);
+}
+
+function proofLabel(kind: ProofState["kind"]) {
+  switch (kind) {
+    case "verified":
+      return "verified";
+    case "invalid":
+      return "invalid";
+    case "missing":
+      return "no proof";
+    case "loading":
+      return "checking";
+    default:
+      return "idle";
+  }
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Verification failed";
+}
 
 export function ApiPage() {
-  const location = useLocation();
-  const [active, setActive] = useState<ApiSection>(() =>
-    parseHash(location.hash),
-  );
-
-  useEffect(() => {
-    setActive(parseHash(location.hash));
-  }, [location.hash]);
-
-  const Section = SECTIONS[active];
-
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
+      <header className={styles.hero}>
+        <p className={styles.heroEyebrow}>Developer Reference</p>
         <h1 className={styles.title}>API Reference</h1>
         <p className={styles.desc}>
-          REST endpoints and WebSocket streams for integrating btick price data.
+          Integration guide for btick price delivery, settlement resolution, historical replay, and operational verification.
         </p>
-        <code className={styles.baseUrl}>
-          https://btick-production.up.railway.app
-        </code>
-        <p className={styles.transport}>
-          All responses <code>application/json</code>. CORS enabled for all
-          origins.
-        </p>
+        <div className={styles.baseCard}>
+          <span className={styles.baseLabel}>Base URL</span>
+          <code className={styles.baseUrl}>https://btick-production.up.railway.app</code>
+          <p className={styles.transport}>
+            JSON over HTTPS · RFC3339 timestamps · CORS enabled · WebSocket at <code>/ws/price</code>
+          </p>
+        </div>
       </header>
 
-      <Section />
+      <OverviewSection />
+      <LatestSection />
+      <SettlementSection />
+      <SnapshotsSection />
+      <WebSocketSection />
+      <HealthSection />
+      <EndpointsSection />
     </div>
   );
 }

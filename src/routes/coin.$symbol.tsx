@@ -38,7 +38,7 @@ export function CoinPage() {
         <div className={styles.date}>{today}</div>
         <p className={styles.desc}>
           Real-time {base.toUpperCase()} price aggregated from multiple exchange sources via multi-venue median.
-          Sub-second precision for prediction market settlement.
+          Built for low-latency monitoring, robust downstream consumption, and auditable finalized boundaries.
         </p>
       </div>
 
