@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "./client";
+import type { components } from "./schema";
 
 export interface SymbolMetadata {
   symbol: string;
@@ -11,6 +12,9 @@ export interface SymbolMetadata {
   market_hours: string;
   feed_id: string;
 }
+
+type SettlementPrice = components["schemas"]["SettlementPrice"];
+type AttestationPublicKey = components["schemas"]["AttestationPublicKey"];
 
 function buildApiUrl(path: string, query?: Record<string, string | undefined>) {
   const baseUrl = import.meta.env.VITE_API_URL ?? "";
@@ -34,6 +38,46 @@ export function latestPriceOptions(symbol: string) {
       return resp.json();
     },
     staleTime: 30_000,
+  });
+}
+
+export function settlementPriceOptions(ts: string) {
+  return queryOptions({
+    queryKey: ["price", "settlement", ts],
+    queryFn: async () => {
+      const resp = await fetch(buildApiUrl("/v1/price/settlement", { ts }));
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        const message =
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : `Failed to fetch settlement price (${resp.status})`;
+        throw new Error(message);
+      }
+      return payload as SettlementPrice;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function attestationPublicKeyOptions() {
+  return queryOptions({
+    queryKey: ["attestation", "public-key"],
+    queryFn: async () => {
+      const resp = await fetch(buildApiUrl("/v1/attestation/public-key"));
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        const message =
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : resp.status === 404
+              ? "Attestations are not enabled on this instance"
+              : `Failed to fetch attestation public key (${resp.status})`;
+        throw new Error(message);
+      }
+      return payload as AttestationPublicKey;
+    },
+    staleTime: Infinity,
   });
 }
 

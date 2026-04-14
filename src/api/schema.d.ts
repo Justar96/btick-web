@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Get current canonical price
-         * @description Returns the latest canonical BTC/USD price from memory (lowest latency)
+         * @description Returns the latest canonical price for the requested symbol from memory (lowest latency)
          */
         get: operations["getLatestPrice"];
         put?: never;
@@ -32,11 +32,31 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get settlement price
-         * @description Returns the official settlement price at a specific 5-minute boundary.
-         *     **Primary endpoint for prediction market resolution.**
+         * Get finalized boundary price
+         * @description Returns the finalized canonical price at a specific 5-minute boundary.
+         *     The path retains historical `settlement` naming for backward compatibility.
          */
         get: operations["getSettlementPrice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/attestation/public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get attestation public key
+         * @description Returns the currently active Ed25519 public key metadata used to sign finalized boundary-price attestations.
+         */
+        get: operations["getAttestationPublicKey"];
         put?: never;
         post?: never;
         delete?: never;
@@ -139,12 +159,135 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an API account
+         * @description Creates a new API account and returns a generated API key when signup is enabled.
+         */
+        post: operations["signupAPIAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current API account
+         * @description Returns the account associated with the supplied API key.
+         */
+        get: operations["getCurrentAPIAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/symbols": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List configured symbols
+         * @description Returns the list of canonical symbols configured on this instance
+         */
+        get: operations["getSymbols"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get symbol metadata
+         * @description Returns UI and product metadata for a canonical symbol.
+         */
+        get: operations["getSymbolMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SignupRequest: {
+            /**
+             * Format: email
+             * @example operator@example.com
+             */
+            email: string;
+            /** @example Ops Team */
+            name?: string;
+        };
+        APIAccount: {
+            /** Format: uuid */
+            account_id: string;
+            /** Format: email */
+            email: string;
+            name?: string;
+            /** @example starter */
+            tier: string;
+            /** @example btk_12345678 */
+            api_key_prefix: string;
+            active: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            last_used_at?: string;
+        };
+        SymbolMetadata: {
+            /** @example ETH/USD */
+            symbol: string;
+            /** @example ETH */
+            base_asset: string;
+            /** @example USD */
+            quote_asset: string;
+            /** @example price */
+            product_type: string;
+            /** @example reference */
+            product_sub_type: string;
+            /** @example ETH/USD-RefPrice-Premium-Global-001 */
+            product_name: string;
+            /** @example 24/7 */
+            market_hours: string;
+            /** @example btick-refprice-eth-usd */
+            feed_id: string;
+        };
         LatestPrice: {
-            /** @example BTC/USD */
+            /** @example ETH/USD */
             symbol: string;
             /**
              * Format: date-time
@@ -184,18 +327,18 @@ export interface components {
         SettlementPrice: {
             /**
              * Format: date-time
-             * @description The settlement timestamp (5-minute boundary)
+             * @description The finalized 5-minute boundary timestamp
              */
             settlement_ts: string;
-            /** @example BTC/USD */
+            /** @example ETH/USD */
             symbol: string;
             /**
-             * @description Official settlement price
+             * @description Finalized boundary price
              * @example 70105.45
              */
             price: string;
             /**
-             * @description - confirmed: High quality, safe for auto-settlement
+             * @description - confirmed: High quality, safe for automated downstream use
              *     - degraded: Fewer sources, use with caution
              *     - stale: No fresh data, manual review recommended
              * @enum {string}
@@ -214,9 +357,62 @@ export interface components {
             finalized_at?: string;
             /**
              * Format: byte
-             * @description Base64-encoded JSON with per-source details (for audit)
+             * @description Base64-encoded JSON with per-source details (for audit and verification)
              */
             source_details?: string;
+            attestation?: components["schemas"]["SettlementAttestation"];
+        };
+        SettlementAttestation: {
+            /** @example btick.settlement_attestation.v1 */
+            type: string;
+            /** @enum {string} */
+            algorithm: "ed25519";
+            /** @example prod-2026-q2 */
+            key_id: string;
+            /** Format: date-time */
+            signed_at: string;
+            /** @example sha256:4f0f7a0ccf5e4b6d3d1aef7f98eac6d17ec815f6f49e83a661c4c0e0f8a8ef6f */
+            payload_hash: string;
+            /** @description Ed25519 signature encoded as base64url without padding. */
+            signature: string;
+            payload: components["schemas"]["SettlementAttestationPayload"];
+        };
+        SettlementAttestationPayload: {
+            /** @example btick.settlement_attestation.v1 */
+            type: string;
+            /** Format: date-time */
+            settlement_ts: string;
+            /** @example ETH/USD */
+            symbol: string;
+            /** @example 70105.45 */
+            price: string;
+            /** @enum {string} */
+            status: "confirmed" | "degraded" | "stale";
+            /** @enum {string} */
+            basis: "median_trade" | "median_mixed" | "single_trade" | "single_midpoint" | "carry_forward";
+            /**
+             * @description Canonical string representation of the quality score used for signing.
+             * @example 0.9556
+             */
+            quality_score: string;
+            source_count: number;
+            sources_used: string[];
+            /** Format: date-time */
+            finalized_at: string;
+            /** @example sha256:5d962d5c4d37b0d6dd39c4d543af7d6274fc1e90d6f701687ce2f7f4401f4f80 */
+            source_details_sha256: string;
+        };
+        AttestationPublicKey: {
+            /** @example btick.settlement_attestation.v1 */
+            type: string;
+            /** @enum {string} */
+            algorithm: "ed25519";
+            /** @example prod-2026-q2 */
+            key_id: string;
+            /** @description Ed25519 public key encoded as base64url without padding. */
+            public_key: string;
+            /** @enum {string} */
+            encoding: "base64url";
         };
         Snapshot: {
             /** Format: date-time */
@@ -266,6 +462,11 @@ export interface components {
             status?: "ok" | "degraded" | "stale" | "no_data";
             /** Format: date-time */
             timestamp?: string;
+            dependencies?: {
+                database?: {
+                    ready?: boolean;
+                };
+            };
             latest_price?: string;
             /** Format: date-time */
             latest_ts?: string;
@@ -332,16 +533,21 @@ export interface components {
         };
         /**
          * @description Client-to-server message for subscription management.
-         *     Unknown actions and types are silently ignored (forward-compatible).
+         *     Unknown actions, types, and symbols are silently ignored (forward-compatible).
          */
         WSClientAction: {
             /**
-             * @description Subscribe or unsubscribe from message types
+             * @description Subscribe or unsubscribe from message types and symbols
              * @enum {string}
              */
             action: "subscribe" | "unsubscribe";
             /** @description Message types to subscribe/unsubscribe */
-            types: ("snapshot_1s" | "latest_price" | "heartbeat")[];
+            types?: ("snapshot_1s" | "latest_price" | "heartbeat")[];
+            /**
+             * @description Optional canonical symbols to subscribe/unsubscribe.
+             *     Omit to keep all symbols enabled.
+             */
+            symbols?: string[];
         };
     };
     responses: never;
@@ -385,7 +591,7 @@ export interface operations {
         parameters: {
             query: {
                 /**
-                 * @description Settlement timestamp (RFC3339). Must be on a 5-minute boundary.
+                 * @description Boundary timestamp (RFC3339). Must be on a 5-minute boundary.
                  * @example 2026-03-19T09:10:00Z
                  */
                 ts: string;
@@ -396,7 +602,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Settlement price */
+            /** @description Finalized boundary price */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -423,8 +629,37 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Price not yet finalized */
+            /** @description Boundary price not yet finalized */
             425: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAttestationPublicKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attestation public key metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttestationPublicKey"];
+                };
+            };
+            /** @description Attestations are not enabled */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -544,6 +779,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeedHealth"][];
+                };
+            };
+        };
+    };
+    signupAPIAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignupRequest"];
+            };
+        };
+        responses: {
+            /** @description Account created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIAccount"] & {
+                        /**
+                         * @description Generated API key. Returned only at signup time.
+                         * @example btk_0123456789abcdef
+                         */
+                        api_key: string;
+                    };
+                };
+            };
+            /** @description Invalid request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Account already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getCurrentAPIAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIAccount"];
+                };
+            };
+            /** @description Missing or invalid API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSymbols: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of canonical symbols */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
+    getSymbolMetadata: {
+        parameters: {
+            query?: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Symbol metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolMetadata"];
+                };
+            };
+            /** @description Symbol not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
