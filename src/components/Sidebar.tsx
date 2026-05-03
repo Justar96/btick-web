@@ -1,4 +1,4 @@
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useParams, useMatchRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { symbolsOptions } from "@/api/queries";
 import { CoinIcon } from "./CoinIcon";
@@ -10,6 +10,8 @@ function symbolToSlug(symbol: string) {
 
 export function Sidebar() {
   const { symbol: activeSlug } = useParams({ strict: false }) as { symbol?: string };
+  const matchRoute = useMatchRoute();
+  const isDemoPage = !!matchRoute({ to: "/demo" });
   const { data: symbols } = useQuery(symbolsOptions());
 
   return (
@@ -21,7 +23,7 @@ export function Sidebar() {
       <nav className={styles.nav}>
         {(symbols ?? []).map((sym) => {
           const slug = symbolToSlug(sym);
-          const isActive = slug === activeSlug;
+          const isActive = slug === activeSlug && !isDemoPage;
           return (
             <Link
               key={sym}
@@ -34,6 +36,16 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        <div className={styles.divider} />
+
+        <Link
+          to="/demo"
+          className={`${styles.navLink} ${isDemoPage ? styles.navLinkActive : ""}`}
+        >
+          <span className={styles.navIcon}>Demo</span>
+          <span>How it works</span>
+        </Link>
       </nav>
 
       <div className={styles.spacer} />
