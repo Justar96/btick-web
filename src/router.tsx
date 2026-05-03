@@ -2,7 +2,6 @@ import { createRouter, createRoute, createRootRoute } from "@tanstack/react-rout
 import { RootLayout } from "./routes/__root";
 import { HomePage } from "./routes/index";
 import { CoinPage } from "./routes/coin.$symbol";
-import { ApiPage } from "./routes/api";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -20,13 +19,7 @@ const coinRoute = createRoute({
   component: CoinPage,
 });
 
-const apiRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/api",
-  component: ApiPage,
-});
-
-const routeTree = rootRoute.addChildren([indexRoute, coinRoute, apiRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, coinRoute]);
 
 export const router = createRouter({ routeTree });
 

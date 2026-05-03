@@ -41,11 +41,11 @@ export function latestPriceOptions(symbol: string) {
   });
 }
 
-export function settlementPriceOptions(ts: string) {
+export function settlementPriceOptions(ts: string, symbol?: string) {
   return queryOptions({
-    queryKey: ["price", "settlement", ts],
+    queryKey: ["price", "settlement", symbol, ts],
     queryFn: async () => {
-      const resp = await fetch(buildApiUrl("/v1/price/settlement", { ts }));
+      const resp = await fetch(buildApiUrl("/v1/price/settlement", { symbol, ts }));
       const payload = await resp.json().catch(() => null);
       if (!resp.ok) {
         const message =
@@ -86,22 +86,21 @@ export function snapshotsOptions(symbol: string, start: string, end?: string) {
     queryKey: ["price", "snapshots", symbol, start, end],
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/price/snapshots", {
-        params: { query: { start, end } },
+        params: { query: { symbol, start, end } },
       });
       if (error) throw error;
-      // Backend returns all symbols; filter client-side
-      return (data ?? []).filter((s: { symbol?: string }) => s.symbol === symbol);
+      return data ?? [];
     },
     staleTime: Infinity,
   });
 }
 
-export function ticksOptions(limit?: number) {
+export function ticksOptions(limit?: number, symbol?: string) {
   return queryOptions({
-    queryKey: ["price", "ticks", limit],
+    queryKey: ["price", "ticks", symbol, limit],
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/price/ticks", {
-        params: { query: { limit } },
+        params: { query: { symbol, limit } },
       });
       if (error) throw error;
       return data;

@@ -1,8 +1,9 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Liveline } from "liveline";
 import type { LivelinePoint } from "liveline";
 import { snapshotsOptions } from "@/api/queries";
+import { usePrice } from "@/ws/context";
 import styles from "./PriceChart.module.css";
 
 const WINDOWS = [
@@ -35,6 +36,7 @@ interface SnapshotRow {
 
 export function PriceChart({ symbol }: Props) {
   const [windowSecs, setWindowSecs] = useState(300);
+  const live = usePrice(symbol);
 
   const backfillStart = useMemo(
     () => new Date(Date.now() - MAX_WINDOW_SECS * 1000).toISOString(),
@@ -50,7 +52,7 @@ export function PriceChart({ symbol }: Props) {
     refetchOnWindowFocus: false,
   });
 
-  const data: LivelinePoint[] = useMemo(() => {
+  const series: LivelinePoint[] = useMemo(() => {
     const bySecond = new Map<number, LivelinePoint>();
 
     for (const r of backfillData ?? []) {
@@ -73,7 +75,27 @@ export function PriceChart({ symbol }: Props) {
     return pts;
   }, [backfillData, liveData]);
 
-  const value = data.length > 0 ? data[data.length - 1].value : 0;
+  const liveValue = live?.price ? parseFloat(live.price) : undefined;
+  const liveTime = live?.ts ? toEpoch(live.ts) : 0;
+
+  // Advance the trailing tip's X position between WS messages so the line
+  // endpoint stays anchored at "now" alongside Liveline's marker.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const data: LivelinePoint[] = useMemo(() => {
+    if (liveValue === undefined || series.length === 0) return series;
+    const lastTime = series[series.length - 1].time;
+    const tip = Math.max(liveTime, nowMs / 1000);
+    if (tip - lastTime < 0.05) return series;
+    return [...series, { time: tip, value: liveValue }];
+  }, [series, liveValue, liveTime, nowMs]);
+
+  const value =
+    liveValue ?? (series.length > 0 ? series[series.length - 1].value : 0);
   const hasData = data.length >= 2;
 
   const handleWindowChange = useCallback((secs: number) => {

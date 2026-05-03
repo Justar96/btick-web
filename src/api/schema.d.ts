@@ -473,19 +473,21 @@ export interface components {
             source_count?: number;
         };
         FeedHealth: {
-            source?: string;
+            /** @example ETH/USD */
+            symbol: string;
+            source: string;
             /** @enum {string} */
-            conn_state?: "connected" | "connecting" | "disconnected";
+            conn_state: "connected" | "connecting" | "disconnected";
             /** Format: date-time */
             last_message_ts?: string;
             /** Format: date-time */
             last_trade_ts?: string;
             median_lag_ms?: number;
-            reconnect_count_1h?: number;
-            consecutive_errors?: number;
-            stale?: boolean;
+            reconnect_count_1h: number;
+            consecutive_errors: number;
+            stale: boolean;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         Error: {
             /** @description Error message */
@@ -560,7 +562,10 @@ export type $defs = Record<string, never>;
 export interface operations {
     getLatestPrice: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -590,6 +595,8 @@ export interface operations {
     getSettlementPrice: {
         parameters: {
             query: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
                 /**
                  * @description Boundary timestamp (RFC3339). Must be on a 5-minute boundary.
                  * @example 2026-03-19T09:10:00Z
@@ -672,6 +679,8 @@ export interface operations {
     getSnapshots: {
         parameters: {
             query: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
                 /** @description Start time (RFC3339) */
                 start: string;
                 /** @description End time (RFC3339), defaults to now */
@@ -697,6 +706,8 @@ export interface operations {
     getTicks: {
         parameters: {
             query?: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
                 /** @description Number of ticks to return */
                 limit?: number;
             };
@@ -720,6 +731,8 @@ export interface operations {
     getRawTicks: {
         parameters: {
             query?: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
                 /** @description Filter by source */
                 source?: "binance" | "coinbase" | "kraken" | "okx";
                 start?: string;
@@ -745,7 +758,10 @@ export interface operations {
     };
     getHealth: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Canonical symbol such as ETH/USD. Defaults to the first configured symbol. */
+                symbol?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

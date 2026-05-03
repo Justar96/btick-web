@@ -23,10 +23,6 @@ function Footer() {
         >
           GitHub
         </a>
-        <span className={styles.footerDot}>&middot;</span>
-        <a href="/api" className={styles.footerLink}>
-          API Docs
-        </a>
       </div>
     </footer>
   );
