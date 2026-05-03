@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Liveline } from "liveline";
 import type { LivelinePoint } from "liveline";
@@ -13,6 +13,8 @@ const WINDOWS = [
 ];
 
 const MAX_WINDOW_SECS = 3600;
+const TICK_THROTTLE_MS = 100;
+const MAX_POINTS = 36_000;
 
 const formatPrice = (v: number) =>
   v.toLocaleString("en-US", {
@@ -20,18 +22,8 @@ const formatPrice = (v: number) =>
     maximumFractionDigits: 2,
   });
 
-function toEpoch(iso: string): number {
-  const ms = Date.parse(iso);
-  return ms > 0 ? ms / 1000 : 0;
-}
-
 interface Props {
   symbol: string;
-}
-
-interface SnapshotRow {
-  ts_second: string;
-  price: string;
 }
 
 export function PriceChart({ symbol }: Props) {
@@ -44,59 +36,70 @@ export function PriceChart({ symbol }: Props) {
   );
   const { data: backfillData } = useQuery(snapshotsOptions(symbol, backfillStart));
 
-  const { data: liveData } = useQuery<SnapshotRow[]>({
-    queryKey: ["price", "snapshots", "live", symbol],
-    queryFn: () => [],
-    staleTime: Infinity,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-  });
+  const [points, setPoints] = useState<LivelinePoint[]>([]);
+  const [prevSymbol, setPrevSymbol] = useState(symbol);
+  const seededRef = useRef(false);
+  const lastTickAtRef = useRef(0);
 
-  const series: LivelinePoint[] = useMemo(() => {
-    const bySecond = new Map<number, LivelinePoint>();
+  // Reset chart state synchronously when symbol changes — otherwise the new
+  // symbol's ticks would append onto the previous symbol's line.
+  if (prevSymbol !== symbol) {
+    setPrevSymbol(symbol);
+    setPoints([]);
+    seededRef.current = false;
+    lastTickAtRef.current = 0;
+  }
 
-    for (const r of backfillData ?? []) {
-      if (!r.ts_second || !r.price) continue;
-      const t = toEpoch(r.ts_second);
-      if (t === 0) continue;
-      bySecond.set(Math.floor(t), { time: t, value: parseFloat(r.price) });
-    }
-
-    for (const r of liveData ?? []) {
-      const t = toEpoch(r.ts_second);
-      if (t === 0) continue;
-      bySecond.set(Math.floor(t), { time: t, value: parseFloat(r.price) });
-    }
-
-    if (bySecond.size === 0) return [];
-
-    const pts = Array.from(bySecond.values());
-    pts.sort((a, b) => a.time - b.time);
-    return pts;
-  }, [backfillData, liveData]);
-
-  const liveValue = live?.price ? parseFloat(live.price) : undefined;
-  const liveTime = live?.ts ? toEpoch(live.ts) : 0;
-
-  // Advance the trailing tip's X position between WS messages so the line
-  // endpoint stays anchored at "now" alongside Liveline's marker.
-  const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
-    const id = window.setInterval(() => setNowMs(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, []);
+    if (seededRef.current) return;
+    if (!backfillData || backfillData.length === 0) return;
+    seededRef.current = true;
 
-  const data: LivelinePoint[] = useMemo(() => {
-    if (liveValue === undefined || series.length === 0) return series;
-    const lastTime = series[series.length - 1].time;
-    const tip = Math.max(liveTime, nowMs / 1000);
-    if (tip - lastTime < 0.05) return series;
-    return [...series, { time: tip, value: liveValue }];
-  }, [series, liveValue, liveTime, nowMs]);
+    const seeded: LivelinePoint[] = [];
+    for (const r of backfillData) {
+      if (!r.ts_second || !r.price) continue;
+      const t = Date.parse(r.ts_second) / 1000;
+      const v = parseFloat(r.price);
+      if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+      seeded.push({ time: t, value: v });
+    }
+    seeded.sort((a, b) => a.time - b.time);
 
-  const value =
-    liveValue ?? (series.length > 0 ? series[series.length - 1].value : 0);
-  const hasData = data.length >= 2;
+    setPoints((existingLive) => {
+      if (existingLive.length === 0) return seeded;
+      const liveStart = existingLive[0].time;
+      const before = seeded.filter((p) => p.time < liveStart - 1e-3);
+      return before.concat(existingLive);
+    });
+  }, [backfillData]);
+
+  useEffect(() => {
+    if (!live?.price) return;
+    const v = parseFloat(live.price);
+    if (!Number.isFinite(v)) return;
+
+    const nowMs = Date.now();
+    if (nowMs - lastTickAtRef.current < TICK_THROTTLE_MS) return;
+    lastTickAtRef.current = nowMs;
+
+    const point: LivelinePoint = { time: nowMs / 1000, value: v };
+    setPoints((prev) => {
+      const next = prev.length >= MAX_POINTS
+        ? prev.slice(prev.length - MAX_POINTS + 1)
+        : prev.slice();
+      next.push(point);
+      return next;
+    });
+  }, [live?.ts, live?.price]);
+
+  const liveValue = live?.price ? parseFloat(live.price) : NaN;
+  const value = Number.isFinite(liveValue)
+    ? liveValue
+    : points.length > 0
+      ? points[points.length - 1].value
+      : 0;
+
+  const hasData = points.length >= 2;
 
   const handleWindowChange = useCallback((secs: number) => {
     setWindowSecs(secs);
@@ -106,7 +109,7 @@ export function PriceChart({ symbol }: Props) {
     <div className={styles.wrap}>
       <div className={styles.chart}>
         <Liveline
-          data={data}
+          data={points}
           value={value}
           loading={!hasData}
           window={windowSecs}
