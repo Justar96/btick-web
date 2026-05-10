@@ -47,7 +47,7 @@ const EXCHANGE_META: Record<ExchangeKey, { label: string; color: string; tint: s
   binance:  { label: "Binance",  color: "#f0b90b", tint: "rgba(240, 185, 11, 0.38)", abbr: "BN" },
   coinbase: { label: "Coinbase", color: "#0052ff", tint: "rgba(0, 82, 255, 0.32)",   abbr: "CB" },
   kraken:   { label: "Kraken",   color: "#5741d9", tint: "rgba(87, 65, 217, 0.32)",  abbr: "KR" },
-  okx:      { label: "OKX",      color: "#525252", tint: "rgba(82, 82, 82, 0.30)",   abbr: "OX" },
+  okx:      { label: "OKX",      color: "#525252", tint: "rgba(140, 140, 150, 0.32)", abbr: "OX" },
 };
 
 const REJECT_TINT = "rgba(197, 48, 48, 0.45)";
@@ -277,8 +277,27 @@ export function DemoPage() {
         label: EXCHANGE_META[key].label,
       });
     }
+    if (canonical.length > 0) {
+      // Liveline ignores `lineWidth` for series (uses internal default), and
+      // skips drawing the primary `data` line whenever `series` is non-empty.
+      // Two overlapping canonical strokes give the bold-line look we want
+      // without forking the lib. Halo first, then crisp top stroke on it.
+      list.push({
+        id: "canonical-halo",
+        data: canonical,
+        value: canonicalValue,
+        color: "rgba(0, 0, 0, 0.35)",
+      });
+      list.push({
+        id: "canonical",
+        data: canonical,
+        value: canonicalValue,
+        color: "#000000",
+        label: "btick",
+      });
+    }
     return list;
-  }, [configs, providerHistory, prices, result]);
+  }, [configs, providerHistory, prices, result, canonical, canonicalValue]);
 
   const median = result?.median ?? 0;
   const enabledCount = EXCHANGES.filter((k) => configs[k].enabled).length;
@@ -334,13 +353,8 @@ export function DemoPage() {
             series={series}
             window={CHART_WINDOW}
             theme="light"
-            badge={false}
-            badgeTail={false}
-            fill
             grid
             scrub
-            momentum
-            lineWidth={1.5}
             loading={!hasChart}
             formatValue={formatPrice}
             seriesToggleCompact
